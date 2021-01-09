@@ -1,0 +1,319 @@
+What is the A20 line?
+            The A20 line takes a bit of explaining so hang with me please. 
+            When the AT was introduced, it was able to access up to sixteen 
+            megabytes of memory, but in order to remain compatible with the 
+            IBM-XT, due to a quirk in the XT architecture (memory wraparound) 
+            had to be duplicated in the AT so things would work the same, the 
+            20th address line on the bus (A20) was turned off so this 
+            "wrap-around" effect worked and software from the old XT days 
+            continued to work (compatibility was a *B*I*G* issue back then).
+            The A20 line is controlled by the keyboard controller unit. Which is 
+            usually a derivative of the 8042 chip.
+    
+ 
+Why can't I access all my memory! I have 128mb and can only use 1mb?
+            The main reason you can't access all your memory (or only "odd" 
+            megabytes) is because you need to enable the A20 line on your bus. 
+            (For an explanation of the A20 line, see What is the A20 line? 
+    
+ 
+How do I enable the A20 line?
+            To enable the A20 line, you have to use some hardware IO using the 
+            Keyboard Controller chip (8042 chip) and enable it. Good 
+            documentation exists for the 8042 chip but here is my source for 
+            enabling the A20 in C code. 
+            The flow chart for this is;
+                Disable interrupts 
+                Wait until the keyboard buffer is empty 
+                Send command to disable the keyboard 
+                Wait until the keyboard buffer is empty 
+                Send command to read output port 
+                Wait until the keyboard buffer is empty 
+                Save byte from input port 
+                Wait until the keyboard buffer is empty 
+                Send command Write output port 
+                Wait until the keyboard buffer is empty 
+                Send saved byte OR by 2 (GATE A20 to ON) 
+                Wait until the keyboard buffer is empty 
+                Enable the keyboard 
+                Enable interrupts 
+            Here is my C source;
+/* Init the A20 by Dark Fiber */
+void init_A20(void)
+{
+	UCHAR	a;
+
+	disable_ints();
+
+	kyb_wait_until_done();
+	kyb_send_command(0xAD);		// disable keyboard
+
+	kyb_wait_until_done();
+	kyb_send_command(0xD0);		// Read from input
+
+	kyb_wait_until_done();
+	a=kyb_get_data();
+
+	kyb_wait_until_done();
+	kyb_send_command(0xD1);		// Write to output
+
+	kyb_wait_until_done();
+	kyb_send_data(a|2);
+
+	kyb_wait_until_done();
+	kyb_send_command(0xAE);		// enable keyboard
+
+	enable_ints();
+}
+        
+            Or in ASM if you wish 
+;;
+;; NASM 32bit assembler
+;;
+
+[bits 32]
+[section .text]
+
+enable_A20:
+	cli
+
+	call    a20wait
+	mov     al,0xAD
+	out     0x64,al
+
+	call    a20wait
+	mov     al,0xD0
+	out     0x64,al
+
+	call    a20wait2
+	in      al,0x60
+	push    eax
+
+	call    a20wait
+	mov     al,0xD1
+	out     0x64,al
+
+	call    a20wait
+	pop     eax
+	or      al,2
+	out     0x60,al
+
+        call    a20wait
+	mov     al,0xAE
+	out     0x64,al
+
+	call    a20wait
+	ret
+
+a20wait:
+.l0:	mov     ecx,65536
+.l1:	in      al,0x64
+	test    al,2
+	jz      .l2
+	loop    .l1
+	jmp     .l0
+.l2:	ret
+
+
+a20wait2:
+.l0:	mov     ecx,65536
+.l1:	in      al,0x64
+	test    al,1
+	jnz     .l2
+        loop    .l1
+	jmp     .l0
+.l2:	ret
+		
+            
+    
+ 
+How do I determine RAM size?
+            Determining how much memory you have is one of the first things that 
+            most people implement in their kernel. In the "old" days of 
+            operating systems this was very easy as few people had more than 
+            64mb of memory. 
+            Why did I mention 64mb of memory? Because that's all the CMOS can 
+            hold up to 99mb values. When you encounter machines with 128mb what 
+            are you going to do? There are some functions in the BIOS for memory 
+            handling. The first set of calls supported by all BIOS only returns 
+            what is in the CMOS, thus making it irrelevant. There is some more 
+            advanced calls but are not guaranteed to be in every BIOS you 
+            encounter, and since not every machine supports it, means its also 
+            not what we want. Two other methods people use are directly probing 
+            memory, and using your motherboard chipset registers to determine 
+            memory. The only drawback with the later methos is you must know 
+            what kind of chipset the user has on his motherboard....
+            I prefer to directly probe memory at every 1mb interval and test for 
+            memory that way.
+            Something to note, not that you may need to know, is that on old 
+            machines (maybe even new ones), it is possible to have less than 
+            640kb base memory and still have extended memory beyond the 1mb 
+            mark. But in today's machines where most people have single 64mb 
+            DIMM's, you wont come across this.
+    
+ 
+How do I determine RAM size with BIOS?
+            You can determine RAM size with the BIOS via two different calls. 
+            The first call is built in nearly every BIOS, the later call is only 
+            contained within newer BIOS's
+
+(from Ralf Brown's Interrupt Listing)
+--------B-1588-------------------------------
+INT 15 - SYSTEM - GET EXTENDED MEMORY SIZE (286+)
+  AH = 88h
+  Return: CF clear if successful
+    AX = number of contiguous KB starting at absolute address 100000h
+    CF set on error
+  AH = status
+    80h invalid command (PC,PCjr)
+    86h unsupported function (XT,PS30)
+        
+            Notes: TSRs which wish to allocate extended memory to themselves 
+            often hook this call, and return a reduced memory size. They are 
+            then free to use the memory between the new and old sizes at will.
+            the standard BIOS only returns memory between 1MB and 16MB; use 
+            AH=C7h for memory beyond 16MB not all BIOSes correctly return the 
+            carry flag, making this call unreliable unless one first checks 
+            whether it is supported through a mechanism other than calling the 
+            function and testing CF
+            SeeAlso:AH=87h,AH=8Ah"Phoenix",AH=C7h,AX=DA88h,AX=E801h,AX=E820h
+
+--------b-15E820-----------------------------
+INT 15 - newer BIOSes - GET SYSTEM MEMORY MAP
+  AX = E820h
+  EAX = 0000E820h
+  EDX = 534D4150h ('SMAP')
+  EBX = continuation value or 00000000h to start at beginning of map
+  ECX = size of buffer for result, in bytes (should be >= 20 bytes)
+  ES:DI -> buffer for result (see #00560)
+  Return: CF clear if successful
+    EAX = 534D4150h ('SMAP')
+    ES:DI buffer filled
+    EBX = next offset from which to copy or 00000000h if all done
+    ECX = actual length returned in bytes
+    CF set on error
+      AH = error code (86h) (see #00475 at INT 15/AH=80h)
+			
+            Notes: originally introduced with the Phoenix BIOS v4.0, this 
+            function is now supported by most newer BIOSes, since various 
+            versions of Windows call it to find out about the system memory a 
+            maximum of 20 bytes will be transferred at one time, even if ECX is 
+            higher; some BIOSes (e.g. Award Modular BIOS v4.50PG) ignore the 
+            value of ECX on entry, and always copy 20 bytes some BIOSes expect 
+            the high word of EAX to be clear on entry, I.e. EAX=0000E820h
+            if this function is not supported, an application should fall back 
+            to AX=E802h, AX=E801h, and then AH= 88h the BIOS is permitted to 
+            return a nonzero continuation value in EBX and indicate that the end 
+            of the list has already been reached by returning with CF set on the 
+            next iteration this function will return base memory and ISA/PCI 
+            memory contiguous with base memory as normal memory ranges; it will 
+            indicate chipset-defined address holes which are not in use and 
+            motherboard memory-mapped devices, and all occurrences of the system 
+            BIOSasreserved;standardPCaddressrangeswillnotbereported
+            SeeAlso:AH=C7h,AX=E801h"Phoenix",AX=E881h,MEM xxxxh:xxx0h"ACPI"
+
+Format of Phoenix BIOS system memory map address range descriptor:
+Offset	Size	Description	(Table 00559)
+ 00h	QWORD	base address
+ 08h	QWORD	length in bytes
+ 10h	DWORD	type of address range (see #00560)
+
+(Table 00560)
+Values for System Memory Map address type:
+  01h	memory, available to OS
+  02h	reserved, not available (e.g. system ROM, memory-mapped device)
+  03h	ACPI Reclaim Memory (useable by OS after reading ACPI tables)
+  04h	ACPI NVS Memory (OS is required to save this memory between NVS
+       	  sessions)
+ other	not defined yet -- treat as Reserved
+ SeeAlso: #00559
+        
+            
+    
+ 
+How do I determine RAM size with direct probing?
+            Directly probing memory, being a method that does not rely on the 
+            BIOS makes it more portable than one that does rely on the BIOS. 
+            Depending on how its coded, may or may not take into account holes 
+            in system memory (15/16mb mark ala OS/2) or memory mapped devices 
+            like frame buffering SVGA cards, etc. 
+		
+/*
+ * void count_memory (void)
+ *
+ * probes memory above 1mb
+ *
+ * last mod : 05sep98 - stuart george
+ *            08dec98 - ""     ""
+ *            21feb99 - removed dummy calls
+ *
+ */
+void count_memory(void)
+{
+	register ULONG *mem;
+	ULONG	mem_count, a;
+	USHORT	memkb;
+	UCHAR	irq1, irq2;
+	ULONG	cr0;
+
+	/* save IRQ's */
+	irq1=inb(0x21);
+	irq2=inb(0xA1);
+
+	/* kill all irq's */
+	outb(0x21, 0xFF);
+	outb(0xA1, 0xFF);
+
+	mem_count=0;
+	memkb=0;
+
+	// store a copy of CR0
+	__asm__ __volatile("movl %%cr0, %%eax":"=a"(cr0))::"eax");
+
+	// invalidate the cache
+	// write-back and invalidate the cache
+	__asm__ __volatile__ ("wbinvd");
+
+	// plug cr0 with just PE/CD/NW
+	// cache disable(486+), no-writeback(486+), 32bit mode(386+)
+	__asm__ __volatile__("movl %%eax, %%cr0", :: "a" (cr0 | 0x00000001 | 0x40000000 | 0x20000000) : "eax");
+
+	do
+	{
+		memkb++;
+		mem_count+=1024*1024;
+		mem=(ULONG*)mem_count;
+
+		a=*mem;
+
+		*mem=0x55AA55AA;
+		
+		// the empty asm calls tell gcc not to rely on whats in its registers
+		// as saved variables (this gets us around GCC optimisations)
+		asm("":::"memory");
+		if(*mem!=0x55AA55AA)
+			mem_count=0;
+		else
+		{
+			*mem=0xAA55AA55;
+			asm("":::"memory");
+			if(*mem!=0xAA55AA55)
+				mem_count=0;
+		}
+
+		asm("":::"memory");
+		*mem=a;
+	}while(memkb<4096 && mem_count!=0);
+
+	__asm__ __volatile__("movl %%eax, %%cr0", :: "a" (cr0) : "eax");
+
+	mem_end=memkb<<20;
+	mem=(ULONG*)0x413;
+	bse_end=((*mem)&0xFFFF)<<6;
+
+	outb(0x21, irq1);
+	outb(0xA1, irq2);
+}
+		
+            
+

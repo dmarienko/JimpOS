@@ -1,0 +1,42 @@
+  micro kernel structure
+  ----------------------
+                                                                       
+            GDT[0]                 GDT[1]              GDT[2]           
+       +- - - - - - - -+     +- - - - - - - -     +- - - - - - - -+     
+       |  CODE SECTION |     |  DATA SECTION |    |  TSS SECTION  |     
+       +- - - - - - - -+     +- - - - - - - -+    +- - - - - - - -+     
+       |mk_init()      |     |               |                          
+       |mk_exec()      |     |   Stack area  |                          
+       |mk_fork()      |     |Variables area |                          
+       |mk_schedule()  |     |               |         GDT[3]           
+       |...............|     |...............|    +- - - - - - - -+     
+       |mk_alloc() ----+---->|memory allocati|    |  LDT SECTION  |     
+       |mk_free()      |     |  -on  area    |    +- - - - - - - -+     
+       |...............|     |...............|                          
+       |mk_send()      |     |  memory for   |                          
+       |mk_receive()   |     | send/receive  |                          
+       |mk_wait()      |     |   buffers     |                          
+       |...............|      \............./                           
+       |mk_irq_attach()|                                                
+       |mk_irq_detach()|                                                
+        \............./                                                 
+                                                                        
+
+   java virtual machine structure
+   ------------------------------
+  
+   TSS0 -+-> GDT[2,3]
+         |
+   LDT0 -+
+  
+  
+   start java classes structure     ?????????
+   ----------------------------
+
+                       abstract JVK 
+  
+          ClassLoader    Thread 
+      
+  
+  
+
